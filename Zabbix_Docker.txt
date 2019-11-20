@@ -1,0 +1,225 @@
+########################################################################
+#					Instalando Zabbix no CentOS 7					   #
+########################################################################
+
+=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+=                       PREPARANDO O SISTEMA                           - 
+=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+##### Instale o CentOS 7 versão minimal em uma VM
+
+##### Configura a placa de rede:
+vi /etc/sysconfig/network-scripts/ifcfg-enp0s3
+
+Altere a linha
+ONBOOT=no
+
+para
+ONBOOT=yes
+
+##### Em seguida reinicie o servico de rede
+systemctl restart network
+
+##### Verifique se a interface foi configurada:
+ip addr
+
+- Atualiza o CentOS:
+yum -y update
+
+##### Instala o net-tools:
+yum intall net-tools
+
+##### Desabilita o firewall:
+
+systemctl disable firewalld
+systemctl stop firewalld
+
+##### Desabilita o SELINUX:
+setenforce 0
+
+##### Instala o repositório do EPEL:
+yum install -y epel-release
+
+##### Trocar o hostname da VM:
+vi /etc/hostname
+
+##### Configurar servidor DNS:
+ vi /etc/resolv.conf
+ 
+
+=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+=                       INSTALANDO O DOCKER                            - 
+=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+##### Caso tenha alguma versão anterior instalada do Docker digite o seguinte comando para remove-la.
+yum -y remove docker \ docker-common \ docker-selinux \ docker-engine
+
+##### Instalar as dependências da Docker:
+yum install -y yum-utils device-mapper-persistent-data lvm2 wget dpkg
+
+##### Habilite o repositório da Docker no gerenciador de pacotes Yum:
+yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+
+##### Instale o Docker:
+yum install -y docker-ce
+
+##### Inicializado o Docker junto com o sistema operacional:
+systemctl start docker
+systemctl enable docker
+
+##### Verificar o status do serviço Docker:
+systemctl status docker
+
+##### Testar se o Docker está funcionando. Para isso vamos criar um container chamado "teste", rodando uma imagem "hello-world":
+sudo docker run --name testes hello-world
+
+##### Lista as imagens disponíveis no Docker:
+docker images
+
+##### Lista dos containers ativos com o comando ps:
+docker ps
+
+##### Para verificar todos os containers criados, incluindo os que estiverem parados:
+docker ps -a
+
+##### Para facilitar o dia-a-dia, instale também o bash-completion, que permite o auto-complete dos nomes dos containers, imagens e outros elementos da gestão do Docker:
+yum install -y bash-completion
+
+##### Se tudo deu certo até aqui, o Docker está funcionando! Você pode então remover este container "testes" bem como a imagem "hello-world". O comando "rm" remove containers e o "rmi" removem imagens:
+
+sudo docker rm testes
+sudo docker rmi hello-world
+
+
+=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+=                       INSTALANDO O ZABBIX                            - 
+=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+##### Crie o diretorio para persistir os dados do MySQL:
+mkdir -p /docker/mysql/zabbix/data
+
+##### Crie o diretorio para persistir os dados do certificado digital do ZABBIX:
+mkdir -p /docker/zabbix/ssl
+
+##### Baixe a última versão das imagens docker do MySQL, Zabbix-Agent, Zabbix-Proxy, Zabbiz-Server e Zabbix-Web:
+
+VERSAO_MAIOR_ZABBIX=4.2
+docker pull mysql:5.7
+docker pull zabbix/zabbix-agent:centos-$VERSAO_MAIOR_ZABBIX-latest
+docker pull zabbix/zabbix-proxy-sqlite3:centos-$VERSAO_MAIOR_ZABBIX-latest
+docker pull zabbix/zabbix-server-mysql:centos-$VERSAO_MAIOR_ZABBIX-latest
+docker pull zabbix/zabbix-web-apache-mysql:centos-$VERSAO_MAIOR_ZABBIX-latest
+
+NOTA: "VERSAO_MAIOR_ZABBIX=4.2" - Variavel com a versão do zabbix que deseja baixar.
+
+
+##### Inicie o container Docker do MySQL criando o banco de dados para o zabbix:
+##### O banco será criado no diretorio "/docker/mysql/zabbix/data" 
+##### Diretorio que foi criado no inicio do tutorial para persistir os dados do MySQL.
+
+docker run -d --name mysql-zabbix \
+--restart always \
+-p 3306:3306 \
+-v /docker/mysql/zabbix/data:/var/lib/mysql \
+-e MYSQL_HOST=172.17.0.1 \
+-e MYSQL_ROOT_PASSWORD=PasswordBDRoot \
+-e MYSQL_DATABASE=zabbix \
+-e MYSQL_USER=zabbix \
+-e MYSQL_PASSWORD=PasswordBDZabbix \
+mysql:5.7
+
+##### Verificar os LOGS 
+docker logs -f mysql-zabbix
+
+##### Verificar o endereço IP do container do MySQL:
+docker inspect mysql-zabbix | grep IPAddress
+
+
+
+##### Inicie o conteiner docker do Zabbix-Server acessando o banco de dados criado no MySQL:
+
+docker run -d --name zabbix-server \
+--restart always \
+-p 10051:10051 \
+-e MYSQL_ROOT_PASSWORD="PasswordBDRoot" \
+-e DB_SERVER_HOST="172.17.0.1" \
+-e DB_SERVER_PORT="3306" \
+-e MYSQL_USER="zabbix" \
+-e MYSQL_PASSWORD="PasswordBDZabbix" \
+-e MYSQL_DATABASE="zabbix" \
+zabbix/zabbix-server-mysql:centos-$VERSAO_MAIOR_ZABBIX-latest
+
+##### Verificar os LOGS 
+docker logs -f zabbix-server
+
+##### Verificar o endereço IP do container do MySQL:
+docker inspect zabbix-server | grep IPAddress
+
+
+##### Inicie o conteiner docker do Zabbix-Web COM HTTPS acessando o banco de dados criado no MySQL e o conteiner Zabbix-Server:
+##### Os certificados digitais serão armazenados em "/docker/zabbix/ssl"
+
+docker run -d --name zabbix-web \
+--restart always \
+-p 80:80 -p 443:443 \
+-v /docker/zabbix/ssl/file_certificado.crt:/etc/ssl/apache2/ssl.crt \
+-v /docker/zabbix/ssl/file_certificado.key:/etc/ssl/apache2/ssl.key \
+-e DB_SERVER_HOST="172.17.0.1" \
+-e DB_SERVER_PORT="3306" \
+-e MYSQL_USER="zabbix" \
+-e MYSQL_PASSWORD="PasswordBDZabbix" \
+-e MYSQL_DATABASE="zabbix" \
+-e ZBX_SERVER_HOST="172.17.0.1" \
+-e PHP_TZ="America/Sao_Paulo" \
+zabbix/zabbix-web-apache-mysql:centos-$VERSAO_MAIOR_ZABBIX-latest
+
+NOTA: Na linha ZBX_SERVER_HOST="172.17.0.1" atualize o IP do zabbix-server
+
+##### Verificar o endereço IP do container do ZABBIX_SERVER:
+docker inspect zabbix-server | grep IPAddress
+
+##### Verificar os LOGS 
+docker logs -f zabbix-web
+
+- Para procurar as imagens:
+docker search mysql
+
+
+##### Inicie o conteiner docker do Zabbix-Agent:
+##### Troque o IP do campo "ZBX_SERVER_HOST" pelo IP do zabbix-server:
+##### O zabbix Agent é utilizado para monitorar o container onde o server roda.
+
+docker run -d --name zabbix-agent \
+--net=host \
+--hostname "$(hostname)" \
+--privileged \
+-v /:/rootfs \
+-v /var/run:/var/run \
+--restart always \
+-p 10050:10050 \
+-e ZBX_HOSTNAME="$(hostname)" \
+-e ZBX_SERVER_HOST="172.17.0.3" \
+zabbix/zabbix-agent:centos-$VERSAO_MAIOR_ZABBIX-latest
+
+
+##### Verificar os LOGS 
+docker logs -f zabbix-agent
+
+##### Reinicie a VM e acesse o zabbix via web:
+http://192.168.0.103/
+
+User: admin
+Senha: zabbix
+
+
+
+
+Referencias:
+* Docker
+http://uechi.com.br/instalando-e-configurando-docker-no-centos-7/
+https://complemento.net.br/2018/08/14/instalando-o-docker-no-centos-7/
+
+* Zabbix
+https://stato.blog.br/wordpress/deploy-ambiente-zabbix-utilizando-docker/
+https://infraops.info/zabbix-3-0-ubuntu-docker/
+http://blog.aeciopires.com/zabbix-docker/
