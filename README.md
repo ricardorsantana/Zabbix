@@ -13,4 +13,3 @@ MYSQL_PASSWORD=PasswordBDZabbix
 ## Zabbix
 User: admin
 Senha: zabbix
-
